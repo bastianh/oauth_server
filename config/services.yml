@@ -1,0 +1,11 @@
+services:
+    dafire.oauth_server.controller:
+        class: dafire\oauth_server\controller\main
+        arguments:
+            - @config
+            - @controller.helper
+            - @template
+            - @user
+            - @request
+            - @dbal.conn
+            - %core.table_prefix%

@@ -1,0 +1,22 @@
+{
+  "name": "dafire/oauth_server",
+  "type": "phpbb-extension",
+  "description": "oauth_server",
+  "version": "0.0.1",
+  "license": "GPL-2.0",
+  "require": {
+    "php": ">=5.5.0",
+    "bshaffer/oauth2-server-php": "1.7.1"
+  },
+  "authors": [
+    {
+      "name": "Bastian Hoyer <dafire@gmail.com>"
+    }
+  ],
+  "extra": {
+    "display-name": "OAuth Server",
+    "soft-require": {
+      "phpbb/phpbb": ">=3.1.0,<3.2.*@dev"
+    }
+  }
+}
