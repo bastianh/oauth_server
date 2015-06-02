@@ -8,6 +8,8 @@
  */
 namespace dafire\oauth_server\controller;
 
+use dafire\oauth_server\lib\phpbb_storage;
+
 class main
 {
     /* @var \phpbb\config\config */
@@ -20,7 +22,6 @@ class main
     protected $user;
 
     protected $server;
-    protected $request;
 
 
     /**
@@ -39,31 +40,74 @@ class main
         $this->user = $user;
         $this->request = $request;
 
-        $this->server = new \dafire\oauth_server\lib\server($db, $table_prefix);
+        $storage = new phpbb_storage($db, $table_prefix);
+        $this->server = new \OAuth2\Server($storage, array('enforce_state' => false));
+
+
+        $this->oauth_request = new \OAuth2\Request(
+            $request->get_super_global(\phpbb\request\request_interface::GET),
+            $request->get_super_global(\phpbb\request\request_interface::POST),
+            array(),
+            $request->get_super_global(\phpbb\request\request_interface::COOKIE),
+            $request->get_super_global(\phpbb\request\request_interface::FILES),
+            $request->get_super_global(\phpbb\request\request_interface::SERVER)
+        );
+
     }
 
+    public function route($route)
+    {
+        if ($route == "authorize") {
+            return $this->authorize();
+        } else if ($route == "token") {
+            $this->token();
+            exit();
+        } else if ($route == "me") {
+            $this->me();
+            exit();
+        }
+        return null;
+    }
+
+    public function token()
+    {
+        $this->server->handleTokenRequest($this->oauth_request)->send();
+        exit();
+    }
 
     public function authorize()
     {
+        $post = $this->request->get_super_global(\phpbb\request\request_interface::POST);
+        $current_uri = $this->request->get_super_global(\phpbb\request\request_interface::SERVER)['REQUEST_URI'];
 
-        $request = new \OAuth2\Request(
-            $this->request->get_super_global(\phpbb\request\request_interface::GET),
-            $this->request->get_super_global(\phpbb\request\request_interface::POST),
-            array(),
-            $this->request->get_super_global(\phpbb\request\request_interface::COOKIE),
-            $this->request->get_super_global(\phpbb\request\request_interface::FILES),
-            $this->request->get_super_global(\phpbb\request\request_interface::SERVER)
-        );
         $response = new \OAuth2\Response();
 
         // validate the authorize request
-        if (!$this->server->validateAuthorizeRequest($request, $response)) {
+        if (!$this->server->validateAuthorizeRequest($this->oauth_request, $response)) {
             $response->send();
-            die;
+            exit();
         }
 
-        var_dump($this->server);
+        if (empty($post)) {
+            $this->template->assign_var('CURRENT_URI', $current_uri);
+            return $this->helper->render('oauth_server_authorize.html', "authorize");
+        }
 
-        return $this->helper->render('demo_body.html', "seite");
+
+        $is_authorized = ($post['authorized'] === 'yes');
+        $this->server->handleAuthorizeRequest($this->oauth_request, $response, $is_authorized);
+        $response->send();
+        exit();
     }
+
+    public function me()
+    {
+        if (!$this->server->verifyResourceRequest($this->oauth_request)) {
+            $this->server->getResponse()->send();
+            die();
+        }
+        echo json_encode(array('success' => true, 'message' => 'You accessed my APIs!'));
+        die();
+    }
+
 }

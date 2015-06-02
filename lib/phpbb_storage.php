@@ -11,11 +11,14 @@ namespace dafire\oauth_server\lib;
 
 use OAuth2\Storage\AccessTokenInterface;
 use OAuth2\Storage\AuthorizationCodeInterface;
+use OAuth2\Storage\ClientCredentialsInterface;
 use OAuth2\Storage\ClientInterface;
 
 class phpbb_storage implements
     ClientInterface,
-    AuthorizationCodeInterface
+    AuthorizationCodeInterface,
+    ClientCredentialsInterface,
+    AccessTokenInterface
 {
     function __construct(\phpbb\db\driver\driver_interface $db, $table_prefix)
     {
@@ -53,7 +56,7 @@ class phpbb_storage implements
     {
 
         $sql = 'SELECT * FROM ' . $this->table_prefix .
-            'oauth_server_clients WHERE client_id = \'' . $this->db->sql_escape($client_id) .'\'';
+            'oauth_server_clients WHERE client_id = \'' . $this->db->sql_escape($client_id) . '\'';
         $result = $this->db->sql_query($sql);
         $data = $this->db->sql_fetchrow($result);
         $this->db->sql_freeresult($result);
@@ -68,7 +71,15 @@ class phpbb_storage implements
      */
     public function getClientScope($client_id)
     {
-        // TODO: Implement getClientScope() method.
+        if (!$clientDetails = $this->getClientDetails($client_id)) {
+            return false;
+        };
+
+        if (isset($clientDetails['scope'])) {
+            return $clientDetails['scope'];
+        }
+
+        return null;
     }
 
     /**
@@ -93,7 +104,6 @@ class phpbb_storage implements
         if ($grant_type == "authorization_code")
             return true;
         return false;
-        // TODO: Implement checkRestrictedGrantType() method.
     }
 
     /**
@@ -124,7 +134,17 @@ class phpbb_storage implements
      */
     public function getAuthorizationCode($code)
     {
-        // TODO: Implement getAuthorizationCode() method.
+
+        $sql = 'SELECT * FROM ' . $this->table_prefix .
+            'oauth_server_authorization_codes WHERE authorization_code = \'' . $this->db->sql_escape($code) . '\'';
+        $result = $this->db->sql_query($sql);
+
+        $data = $this->db->sql_fetchrow($result);
+        $this->db->sql_freeresult($result);
+        error_log("GET AUTH");
+        error_log(print_r($data, 1));
+        return $data;
+
     }
 
     /**
@@ -147,9 +167,44 @@ class phpbb_storage implements
      *
      * @ingroup oauth2_section_4
      */
-    public function setAuthorizationCode($code, $client_id, $user_id, $redirect_uri, $expires, $scope = null)
+    public function setAuthorizationCode($code, $client_id, $user_id, $redirect_uri, $expires, $scope = null, $id_token = null)
     {
-        // TODO: Implement setAuthorizationCode() method.
+        if (func_num_args() > 6) {
+            return call_user_func_array(array($this, 'setAuthorizationCodeWithIdToken'), func_get_args());
+        }
+
+        // if it exists, update it.
+        if ($this->getAuthorizationCode($code)) {
+            $sql = 'UPDATE ' . $this->table_prefix . 'oauth_server_authorization_codes ' .
+                "SET client_id='" . $this->db->sql_escape($client_id) . "', " .
+                "SET user_id='" . $this->db->sql_escape($user_id) . "', " .
+                "SET redirect_uri='" . $this->db->sql_escape($redirect_uri) . "', " .
+                "SET expires=" . (int)$expires . ", " .
+                'WHERE authorization_code = \'' . $this->db->sql_escape($code) . '\'';
+            $this->db->sql_query($sql);
+        } else {
+            $sql = 'INSERT INTO ' . $this->table_prefix . 'oauth_server_authorization_codes ' .
+                '(authorization_code, client_id, user_id, redirect_uri, expires, scope) ' .
+                "VALUES ('" . $this->db->sql_escape($code) . "', '" . $this->db->sql_escape($client_id) .
+                "', '" . $this->db->sql_escape($user_id) . "', '" . $this->db->sql_escape($redirect_uri) .
+                "', " . (int)$expires . ", '" . $this->db->sql_escape($scope) . "')";
+            $this->db->sql_query($sql);
+        }
+
+        return true;
+    }
+
+    private function setAuthorizationCodeWithIdToken($code, $client_id, $user_id, $redirect_uri, $expires, $scope = null, $id_token = null)
+    {
+
+        // if it exists, update it.
+        if ($this->getAuthorizationCode($code)) {
+            $stmt = $this->db->prepare($sql = sprintf('UPDATE %s SET client_id=:client_id, user_id=:user_id, redirect_uri=:redirect_uri, expires=:expires, scope=:scope, id_token =:id_token where authorization_code=:code', $this->config['code_table']));
+        } else {
+            $stmt = $this->db->prepare(sprintf('INSERT INTO %s (authorization_code, client_id, user_id, redirect_uri, expires, scope, id_token) VALUES (:code, :client_id, :user_id, :redirect_uri, :expires, :scope, :id_token)', $this->config['code_table']));
+        }
+
+        return $stmt->execute(compact('code', 'client_id', 'user_id', 'redirect_uri', 'expires', 'scope', 'id_token'));
     }
 
     /**
@@ -166,6 +221,125 @@ class phpbb_storage implements
      */
     public function expireAuthorizationCode($code)
     {
-        // TODO: Implement expireAuthorizationCode() method.
+        $sql = 'DELETE FROM ' . $this->table_prefix . 'oauth_server_authorization_codes WHERE authorization_code = \'' . $this->db->sql_escape($code) . '\'';
+        $this->db->sql_query($sql);
+        return true;
+    }
+
+    /**
+     * Make sure that the client credentials is valid.
+     *
+     * @param $client_id
+     * Client identifier to be check with.
+     * @param $client_secret
+     * (optional) If a secret is required, check that they've given the right one.
+     *
+     * @return
+     * TRUE if the client credentials are valid, and MUST return FALSE if it isn't.
+     * @endcode
+     *
+     * @see http://tools.ietf.org/html/rfc6749#section-3.1
+     *
+     * @ingroup oauth2_section_3
+     */
+    public function checkClientCredentials($client_id, $client_secret = null)
+    {
+        if (!$result = $this->getClientDetails($client_id)) {
+            return false;
+        };
+
+        return $result && $result['client_secret'] == $client_secret;
+    }
+
+    /**
+     * Determine if the client is a "public" client, and therefore
+     * does not require passing credentials for certain grant types
+     *
+     * @param $client_id
+     * Client identifier to be check with.
+     *
+     * @return
+     * TRUE if the client is public, and FALSE if it isn't.
+     * @endcode
+     *
+     * @see http://tools.ietf.org/html/rfc6749#section-2.3
+     * @see https://github.com/bshaffer/oauth2-server-php/issues/257
+     *
+     * @ingroup oauth2_section_2
+     */
+    public function isPublicClient($client_id)
+    {
+        if (!$result = $this->getClientDetails($client_id)) {
+            return false;
+        };
+        return empty($result['client_secret']);
+    }
+
+    /**
+     * Look up the supplied oauth_token from storage.
+     *
+     * We need to retrieve access token data as we create and verify tokens.
+     *
+     * @param $oauth_token
+     * oauth_token to be check with.
+     *
+     * @return
+     * An associative array as below, and return NULL if the supplied oauth_token
+     * is invalid:
+     * - expires: Stored expiration in unix timestamp.
+     * - client_id: (optional) Stored client identifier.
+     * - user_id: (optional) Stored user identifier.
+     * - scope: (optional) Stored scope values in space-separated string.
+     * - id_token: (optional) Stored id_token (if "use_openid_connect" is true).
+     *
+     * @ingroup oauth2_section_7
+     */
+    public function getAccessToken($oauth_token)
+    {
+        $sql = 'SELECT * FROM ' . $this->table_prefix .
+            'oauth_server_access_tokens WHERE access_token = \'' . $this->db->sql_escape($oauth_token) . '\'';
+        $result = $this->db->sql_query($sql);
+
+        $data = $this->db->sql_fetchrow($result);
+        $this->db->sql_freeresult($result);
+        error_log("GET getAccessToken");
+        error_log(print_r($data, 1));
+        return $data;
+    }
+
+    /**
+     * Store the supplied access token values to storage.
+     *
+     * We need to store access token data as we create and verify tokens.
+     *
+     * @param $oauth_token    oauth_token to be stored.
+     * @param $client_id      client identifier to be stored.
+     * @param $user_id        user identifier to be stored.
+     * @param int $expires expiration to be stored as a Unix timestamp.
+     * @param string $scope OPTIONAL Scopes to be stored in space-separated string.
+     *
+     * @ingroup oauth2_section_4
+     */
+    public function setAccessToken($oauth_token, $client_id, $user_id, $expires, $scope = null)
+    {
+        // if it exists, update it.
+        if ($this->getAccessToken($oauth_token)) {
+            $sql = 'UPDATE ' . $this->table_prefix . 'oauth_server_access_tokens ' .
+                "SET client_id='" . $this->db->sql_escape($client_id) . "', " .
+                "SET user_id='" . $this->db->sql_escape($user_id) . "', " .
+                "SET expires=" . (int)$expires . ", " .
+                "SET scope='" . $this->db->sql_escape($scope) . "', " .
+                'WHERE access_token = \'' . $this->db->sql_escape($oauth_token) . '\'';
+            $this->db->sql_query($sql);
+        } else {
+            $sql = 'INSERT INTO ' . $this->table_prefix . 'oauth_server_access_tokens ' .
+                '(access_token, client_id, expires, user_id, scope) ' .
+                "VALUES ('" . $this->db->sql_escape($oauth_token) . "', '" . $this->db->sql_escape($client_id) .
+                "', " . (int)$expires .", '" . $this->db->sql_escape($user_id) . "', '" .
+                $this->db->sql_escape($scope) . "')";
+            $this->db->sql_query($sql);
+        }
+
+        return true;
     }
 }

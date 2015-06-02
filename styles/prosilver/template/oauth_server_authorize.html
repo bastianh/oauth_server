@@ -1,0 +1,35 @@
+<!-- INCLUDE overall_header.html -->
+
+<div class="content pages-content">
+
+    <!-- IF not S_USER_LOGGED_IN -->
+    <form action="/forum/ucp.php?mode=login" method="post">
+        <fieldset>
+            <label for="username">Benutzername:</label>
+            <input type="text" name="username" id="username" size="10" title="Benutzername"/>
+            <label for="password">Passwort:</label>
+            <input type="password" name="password" id="password" size="10" title="Passwort"/>
+            <input type="submit" name="login" value="Anmelden"/>
+        </fieldset>
+        <label for="autologin">Mich bei jedem Besuch automatisch anmelden <input type="checkbox" name="autologin"
+                                                                                 id="autologin"/></label>
+        <input type="hidden" name="redirect" value="{CURRENT_URI}"/>
+    </form>
+
+    <!-- ELSEIF -->
+
+    <div class="panel">
+        <div class="inner">
+            <form method="post">
+                <label>Do You Authorize TestClient?</label><br/>
+                <input type="submit" name="authorized" value="yes">
+                <input type="submit" name="authorized" value="no">
+            </form>
+        </div>
+    </div>
+
+    <!-- ENDIF -->
+
+</div>
+
+<!-- INCLUDE overall_footer.html -->
